@@ -6,6 +6,13 @@
     <title>Visualização 360°</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
+
+
+    <script>
+      const polyfill = new WebXRPolyfill();
+    </script>
+
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; }
     </style>
