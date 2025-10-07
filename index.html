@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html>
   <head>
@@ -8,13 +7,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
 
-
     <script>
       const polyfill = new WebXRPolyfill();
     </script>
 
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; }
+      #enter-fallback {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        z-index: 9999;
+        padding: 10px 16px;
+        font-size: 16px;
+        border-radius: 8px;
+        border: none;
+        background: rgba(0,0,0,0.6);
+        color: white;
+        cursor: pointer;
+        backdrop-filter: blur(6px);
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -25,10 +38,60 @@
       <a-sky src="#panorama" rotation="0 -90 0"></a-sky>
       <a-camera position="0 1.6 0" wasd-controls-enabled="false" look-controls="true"></a-camera>
     </a-scene>
-    <!-- <script>
-      document.querySelector('a-scene').addEventListener('loaded', function () {
-        this.enterVR();
-      });
-    </script> -->
+
+    <button id="enter-fallback">🕶️ Modo 360°</button>
+
+    <script>
+      const scene = document.querySelector('a-scene');
+      const fallbackBtn = document.getElementById('enter-fallback');
+
+      function checkVRSupport() {
+        if (!navigator.xr) {
+          fallbackBtn.style.display = 'block';
+        }
+      }
+
+      checkVRSupport();
+
+      async function requestSensorPermissionsIfNeeded() {
+        try {
+          if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+            const dm = await DeviceMotionEvent.requestPermission();
+            if (dm !== 'granted') throw new Error('DeviceMotion permission denied');
+          }
+          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            const doPerm = await DeviceOrientationEvent.requestPermission();
+            if (doPerm !== 'granted') throw new Error('DeviceOrientation permission denied');
+          }
+        } catch (err) {
+          console.warn('Permissão de sensores negada ou falhou:', err);
+          alert('Para usar o modo 360°, permita o acesso aos sensores de movimento.');
+          throw err;
+        }
+      }
+
+      async function enterFallbackMode() {
+        await requestSensorPermissionsIfNeeded();
+
+        const el = document.documentElement;
+        const reqFS = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+        if (reqFS) {
+          try { await reqFS.call(el); } catch (err) { console.warn('Falha ao entrar em fullscreen:', err); }
+        }
+
+        // (look-controls + fullscreen)
+        if (scene && typeof scene.enterVR === 'function') {
+          try { scene.enterVR(); } catch (err) { console.warn('enterVR falhou:', err); }
+        }
+
+        // (desktop)
+        const canvas = scene.canvas;
+        if (canvas && canvas.requestPointerLock) {
+          canvas.requestPointerLock();
+        }
+      }
+
+      fallbackBtn.addEventListener('click', enterFallbackMode);
+    </script>
   </body>
 </html>
