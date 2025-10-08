@@ -1,97 +1,177 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <title>Visualização 360°</title>
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
+<head>
+  <meta charset="utf-8">
+  <title>Visualização 360° VR</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <script>
-      const polyfill = new WebXRPolyfill();
-    </script>
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-    <style>
-      html, body { margin: 0; height: 100%; overflow: hidden; }
-      #enter-fallback {
-        position: absolute;
-        right: 16px;
-        bottom: 16px;
-        z-index: 9999;
-        padding: 10px 16px;
-        font-size: 16px;
-        border-radius: 8px;
-        border: none;
-        background: rgba(0,0,0,0.6);
-        color: white;
-        cursor: pointer;
-        backdrop-filter: blur(6px);
-        display: none;
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: black;
+    }
+
+    #enter-vr-btn {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 18px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.6);
+      color: white;
+      cursor: pointer;
+      display: none;
+      z-index: 999;
+    }
+
+    #vr-fake {
+      display: none;
+      position: fixed;
+      top:0; left:0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1000;
+      overflow: hidden;
+      background:black;
+    }
+
+    #vr-left, #vr-right {
+      position:absolute;
+      top:0; height:100%; width:50%;
+      overflow:hidden;
+    }
+    #vr-right { left:50%; }
+
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+
+<a-scene id="scene" vr-mode-ui="enabled:true">
+  <a-assets>
+    <img id="panorama" src="./Cantagalo.JPG" crossorigin="anonymous">
+  </a-assets>
+
+  <a-entity id="rig" position="0 1.6 0">
+    <a-camera look-controls="true" wasd-controls-enabled="false"></a-camera>
+  </a-entity>
+
+  <a-sky id="sky" src="#panorama" rotation="0 -90 0" visible="false"></a-sky>
+</a-scene>
+
+<button id="enter-vr-btn">🕶️ Ativar VR</button>
+
+<div id="vr-fake">
+  <canvas id="vr-left"></canvas>
+  <canvas id="vr-right"></canvas>
+</div>
+
+<script>
+window.addEventListener("load", () => {
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const btn = document.getElementById("enter-vr-btn");
+  const scene = document.getElementById("scene");
+  const sky = document.getElementById("sky");
+  const vrFake = document.getElementById("vr-fake");
+
+  if(isIOS) btn.style.display = "block";
+
+  scene.addEventListener("loaded", () => {
+    const panorama = document.getElementById("panorama");
+    if(panorama.complete){
+      sky.setAttribute("visible", "true");
+    } else {
+      panorama.addEventListener("load", () => {
+        sky.setAttribute("visible","true");
+      });
+    }
+  });
+
+  async function requestSensorPermissions(){
+    if(typeof DeviceMotionEvent?.requestPermission === "function"){
+      try { await DeviceMotionEvent.requestPermission(); } catch {}
+    }
+    if(typeof DeviceOrientationEvent?.requestPermission === "function"){
+      try { await DeviceOrientationEvent.requestPermission(); } catch {}
+    }
+  }
+
+  btn.addEventListener("click", async () => {
+    await requestSensorPermissions();
+
+    if(isIOS){
+      // === iOS VR simulado ===
+      vrFake.style.display = "block";
+      scene.style.display = "none";
+
+      const canvasLeft = document.getElementById("vr-left");
+      const canvasRight = document.getElementById("vr-right");
+
+      canvasLeft.width = window.innerWidth/2;
+      canvasLeft.height = window.innerHeight;
+      canvasRight.width = window.innerWidth/2;
+      canvasRight.height = window.innerHeight;
+
+      const rendererLeft = new THREE.WebGLRenderer({ canvas: canvasLeft });
+      const rendererRight = new THREE.WebGLRenderer({ canvas: canvasRight });
+
+      rendererLeft.setSize(window.innerWidth/2, window.innerHeight);
+      rendererRight.setSize(window.innerWidth/2, window.innerHeight);
+
+      const scene3D = scene.object3D;
+      const cameraLeft = new THREE.PerspectiveCamera(75, (window.innerWidth/2)/window.innerHeight, 0.1, 1000);
+      const cameraRight = cameraLeft.clone();
+
+      // separação entre olhos
+      cameraLeft.position.x = -0.03; 
+      cameraRight.position.x = 0.03;
+
+      // Distorção tipo barrel
+      function applyBarrelDistortion(renderer, canvas){
+        const gl = renderer.getContext();
+        gl.viewport(0,0,canvas.width,canvas.height);
+      
       }
-    </style>
-  </head>
-  <body>
-    <a-scene vr-mode-ui="enabled: true">
-      <a-assets>
-        <img id="panorama" src="Cantagalo.JPG" crossorigin="anonymous">
-      </a-assets>
-      <a-sky src="#panorama" rotation="0 -90 0"></a-sky>
-      <a-camera position="0 1.6 0" wasd-controls-enabled="false" look-controls="true"></a-camera>
-    </a-scene>
 
-    <button id="enter-fallback">🕶️ Modo 360°</button>
-
-    <script>
-      const scene = document.querySelector('a-scene');
-      const fallbackBtn = document.getElementById('enter-fallback');
-
-      function checkVRSupport() {
-        if (!navigator.xr) {
-          fallbackBtn.style.display = 'block';
-        }
+      function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma){
+        const deg2rad = Math.PI/180;
+        const euler = new THREE.Euler(beta*deg2rad, alpha*deg2rad, -gamma*deg2rad, 'YXZ');
+        camera.quaternion.setFromEuler(euler);
       }
 
-      checkVRSupport();
+      window.addEventListener("deviceorientation", e => {
+        updateCameraFromDeviceOrientation(cameraLeft, e.alpha, e.beta, e.gamma);
+        updateCameraFromDeviceOrientation(cameraRight, e.alpha, e.beta, e.gamma);
+      });
 
-      async function requestSensorPermissionsIfNeeded() {
-        try {
-          if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-            const dm = await DeviceMotionEvent.requestPermission();
-            if (dm !== 'granted') throw new Error('DeviceMotion permission denied');
-          }
-          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-            const doPerm = await DeviceOrientationEvent.requestPermission();
-            if (doPerm !== 'granted') throw new Error('DeviceOrientation permission denied');
-          }
-        } catch (err) {
-          console.warn('Permissão de sensores negada ou falhou:', err);
-          alert('Para usar o modo 360°, permita o acesso aos sensores de movimento.');
-          throw err;
-        }
+      function renderLoop(){
+        rendererLeft.render(scene3D, cameraLeft);
+        rendererRight.render(scene3D, cameraRight);
+        requestAnimationFrame(renderLoop);
       }
+      renderLoop();
 
-      async function enterFallbackMode() {
-        await requestSensorPermissionsIfNeeded();
+      const el = document.documentElement;
+      const reqFS = el.requestFullscreen || el.webkitRequestFullscreen;
+      if(reqFS) reqFS.call(el);
 
-        const el = document.documentElement;
-        const reqFS = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-        if (reqFS) {
-          try { await reqFS.call(el); } catch (err) { console.warn('Falha ao entrar em fullscreen:', err); }
-        }
-
-        // (look-controls + fullscreen)
-        if (scene && typeof scene.enterVR === 'function') {
-          try { scene.enterVR(); } catch (err) { console.warn('enterVR falhou:', err); }
-        }
-
-        // (desktop)
-        const canvas = scene.canvas;
-        if (canvas && canvas.requestPointerLock) {
-          canvas.requestPointerLock();
-        }
+    } else {
+      // Android
+      if(scene && typeof scene.enterVR === "function"){
+        try { await scene.enterVR(); } catch(err){ console.warn(err); }
       }
+    }
+  });
 
-      fallbackBtn.addEventListener('click', enterFallbackMode);
-    </script>
-  </body>
+});
+</script>
+
+</body>
 </html>
