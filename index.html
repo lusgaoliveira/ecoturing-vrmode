@@ -57,13 +57,25 @@
 <a-scene id="scene" vr-mode-ui="enabled:true">
   <a-assets>
     <img id="panorama" src="./Cantagalo.JPG" crossorigin="anonymous">
+
+    <!-- panoramas temp -->
+    <img id="temp1" src="./Cantagalo.JPG" crossorigin="anonymous">
+    <img id="temp2" src="./Q360_20240713_135032_000001_Output.JPG" crossorigin="anonymous">
+
+    <!-- áudios temp -->
+    <audio id="audio1" src="./tes1.mp3" preload="auto"></audio>
+    <audio id="audio2" src="./tes2.mp3" preload="auto"></audio>
   </a-assets>
 
   <a-entity id="rig" position="0 1.6 0">
     <a-camera look-controls="true" wasd-controls-enabled="false"></a-camera>
   </a-entity>
 
+  <!-- panorama principal -->
   <a-sky id="sky" src="#panorama" rotation="0 -90 0" visible="false"></a-sky>
+
+  <!-- panorama temporário que vai ficar trocando -->
+  <a-sky id="sky-temp" src="#temp1" rotation="0 -90 0" visible="false"></a-sky>
 </a-scene>
 
 <button id="enter-vr-btn">🕶️ Ativar VR</button>
@@ -79,6 +91,7 @@ window.addEventListener("load", () => {
   const btn = document.getElementById("enter-vr-btn");
   const scene = document.getElementById("scene");
   const sky = document.getElementById("sky");
+  const skyTemp = document.getElementById("sky-temp");
   const vrFake = document.getElementById("vr-fake");
 
   if(isIOS) btn.style.display = "block";
@@ -102,6 +115,34 @@ window.addEventListener("load", () => {
       try { await DeviceOrientationEvent.requestPermission(); } catch {}
     }
   }
+
+  const panoramasTemp = [
+    { img: "#temp1", audio: document.getElementById("audio1") },
+    { img: "#temp2", audio: document.getElementById("audio2") }
+  ];
+  let currentTempIndex = 0;
+
+  function playTemporarySequence() {
+    if(currentTempIndex >= panoramasTemp.length){
+      // Sequência acaba não é mais redenrizada
+      skyTemp.setAttribute("visible", "false"); 
+      return;
+    }
+
+    const pano = panoramasTemp[currentTempIndex];
+    skyTemp.setAttribute("src", pano.img);
+    skyTemp.setAttribute("visible", "true");
+    pano.audio.play();
+
+    // Como vai ser um aúdio explicando a trilha provavelmente, vai ser necessário aumentar o tempo e padrozinar a explicação
+    setTimeout(() => {
+      pano.audio.pause();
+      pano.audio.currentTime = 0;
+      currentTempIndex++;
+      playTemporarySequence();
+    }, 30000);
+  }
+  setTimeout(playTemporarySequence, 5000);
 
   btn.addEventListener("click", async () => {
     await requestSensorPermissions();
@@ -129,15 +170,12 @@ window.addEventListener("load", () => {
       const cameraLeft = new THREE.PerspectiveCamera(75, (window.innerWidth/2)/window.innerHeight, 0.1, 1000);
       const cameraRight = cameraLeft.clone();
 
-      // separação entre olhos
       cameraLeft.position.x = -0.03; 
       cameraRight.position.x = 0.03;
 
-      // Distorção tipo barrel
       function applyBarrelDistortion(renderer, canvas){
         const gl = renderer.getContext();
         gl.viewport(0,0,canvas.width,canvas.height);
-      
       }
 
       function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma){
