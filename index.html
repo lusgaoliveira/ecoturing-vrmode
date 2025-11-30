@@ -2,9 +2,10 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Visualização 360° VR</title>
+  <title>Visualização 360° VR — com Barrel Distortion</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
+  <!-- A-Frame + Three (sua versão atual) -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
@@ -38,8 +39,8 @@
       width: 100vw;
       height: 100vh;
       z-index: 1000;
-      overflow: hidden;
       background:black;
+      overflow: hidden;
     }
 
     #vr-left, #vr-right {
@@ -48,7 +49,6 @@
       overflow:hidden;
     }
     #vr-right { left:50%; }
-
     canvas { display:block; }
   </style>
 </head>
@@ -58,23 +58,18 @@
   <a-assets>
     <img id="panorama" src="./Cantagalo.JPG" crossorigin="anonymous">
 
-    <!-- panoramas temp -->
     <img id="temp1" src="./Cantagalo.JPG" crossorigin="anonymous">
     <img id="temp2" src="./Q360_20240713_135032_000001_Output.JPG" crossorigin="anonymous">
 
-    <!-- áudios temp -->
     <audio id="audio1" src="./tes1.mp3" preload="auto"></audio>
     <audio id="audio2" src="./tes2.mp3" preload="auto"></audio>
   </a-assets>
 
   <a-entity id="rig" position="0 1.6 0">
-    <a-camera look-controls="true" wasd-controls-enabled="false"></a-camera>
+    <a-camera id="mainCamera" look-controls="true" wasd-controls-enabled="false"></a-camera>
   </a-entity>
 
-  <!-- panorama principal -->
   <a-sky id="sky" src="#panorama" rotation="0 -90 0" visible="false"></a-sky>
-
-  <!-- panorama temporário que vai ficar trocando -->
   <a-sky id="sky-temp" src="#temp1" rotation="0 -90 0" visible="false"></a-sky>
 </a-scene>
 
@@ -86,6 +81,12 @@
 </div>
 
 <script>
+/*
+  Versão com barrel distortion:
+  - renderScene -> renderTargetLeft/Right
+  - depois desenha um quad full-screen por olho com shader que aplica inverse-warp (pré-distorção)
+*/
+
 window.addEventListener("load", () => {
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const btn = document.getElementById("enter-vr-btn");
@@ -101,9 +102,7 @@ window.addEventListener("load", () => {
     if(panorama.complete){
       sky.setAttribute("visible", "true");
     } else {
-      panorama.addEventListener("load", () => {
-        sky.setAttribute("visible","true");
-      });
+      panorama.addEventListener("load", () => sky.setAttribute("visible", "true"));
     }
   });
 
@@ -124,8 +123,7 @@ window.addEventListener("load", () => {
 
   function playTemporarySequence() {
     if(currentTempIndex >= panoramasTemp.length){
-      // Sequência acaba não é mais redenrizada
-      skyTemp.setAttribute("visible", "false"); 
+      skyTemp.setAttribute("visible", "false");
       return;
     }
 
@@ -134,7 +132,6 @@ window.addEventListener("load", () => {
     skyTemp.setAttribute("visible", "true");
     pano.audio.play();
 
-    // Como vai ser um aúdio explicando a trilha provavelmente, vai ser necessário aumentar o tempo e padrozinar a explicação
     setTimeout(() => {
       pano.audio.pause();
       pano.audio.currentTime = 0;
@@ -144,64 +141,218 @@ window.addEventListener("load", () => {
   }
   setTimeout(playTemporarySequence, 5000);
 
+  // =============================
+  // FUNÇÕES ÚTEIS PARA O MODO iOS (FAKE VR)
+  // =============================
+
+  // Shader de barrel distortion (pré-distorce a imagem para compensar lente)
+  // Fórmula radial simples: r' = r * (1 + k1*r^2 + k2*r^4)
+  // No fragment usamos mapeamento reverso: uvSample = center + (uv - center) * (1 + k1*r^2 + k2*r^4)
+  const DistortionShader = {
+    uniforms: {
+      "tDiffuse": { value: null },
+      "k1": { value: 0.28 },   // coeficiente principal (ajuste se necessário)
+      "k2": { value: 0.08 },   // termo de ordem superior (ajuste fino)
+      "aspect": { value: 1.0 } // aspect ratio do canvas (width/height of half-screen)
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision mediump float;
+      varying vec2 vUv;
+      uniform sampler2D tDiffuse;
+      uniform float k1;
+      uniform float k2;
+      uniform float aspect;
+
+      void main() {
+        // centraliza em 0,0 com aspecto corrigido
+        vec2 uv = vUv * 2.0 - 1.0;
+        uv.x *= aspect;
+
+        float r2 = uv.x*uv.x + uv.y*uv.y;
+        float factor = 1.0 + k1 * r2 + k2 * r2 * r2;
+
+        vec2 distorted = uv * factor;
+
+        // volta para 0..1 e corrige aspecto
+        distorted.x /= aspect;
+        vec2 sampleUV = (distorted + 1.0) * 0.5;
+
+        // se fora da amostragem, pintar preto (evita amostragem estranha nas bordas)
+        if(sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+          gl_FragColor = vec4(0.0,0.0,0.0,1.0);
+        } else {
+          gl_FragColor = texture2D(tDiffuse, sampleUV);
+        }
+      }
+    `
+  };
+
+  // cria cena ortográfica full-screen quad que amostra um renderTarget com shader
+  function createDistortionQuad(renderTarget, aspect, k1=0.28, k2=0.08) {
+    const quadScene = new THREE.Scene();
+    const quadCamera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+    const geometry = new THREE.PlaneBufferGeometry(2,2);
+    const material = new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.clone(DistortionShader.uniforms),
+      vertexShader: DistortionShader.vertexShader,
+      fragmentShader: DistortionShader.fragmentShader,
+      depthTest: false,
+      depthWrite: false
+    });
+    material.uniforms.tDiffuse.value = renderTarget.texture;
+    material.uniforms.k1.value = k1;
+    material.uniforms.k2.value = k2;
+    material.uniforms.aspect.value = aspect;
+
+    const mesh = new THREE.Mesh(geometry, material);
+    quadScene.add(mesh);
+
+    return { scene: quadScene, camera: quadCamera, material };
+  }
+
+  // função util: cria renderTargets e quads por olho
+  function setupEyeRenderers(renderer, widthHalf, height, options = {}) {
+    const params = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat };
+    const rtLeft  = new THREE.WebGLRenderTarget(widthHalf, height, params);
+    const rtRight = new THREE.WebGLRenderTarget(widthHalf, height, params);
+
+    const aspect = widthHalf / height;
+    const quadLeft  = createDistortionQuad(rtLeft, aspect, options.k1, options.k2);
+    const quadRight = createDistortionQuad(rtRight, aspect, options.k1, options.k2);
+
+    return { rtLeft, rtRight, quadLeft, quadRight };
+  }
+
+  // Ajuste iOS: convert DeviceOrientation para quaternion similar ao WebXR
+  function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma) {
+    const deg2rad = Math.PI / 180;
+
+    const a = alpha ? alpha * deg2rad : 0;
+    const b = beta  ? (beta - 90) * deg2rad : 0; 
+    const g = gamma ? gamma * deg2rad : 0;
+
+    const euler = new THREE.Euler(b, a, -g, "YXZ");
+    camera.quaternion.setFromEuler(euler);
+  }
+
+  // Ouvinte do botão
   btn.addEventListener("click", async () => {
     await requestSensorPermissions();
 
     if(isIOS){
-      // === iOS VR simulado ===
+      // === iOS VR com barrel distortion ===
       vrFake.style.display = "block";
       scene.style.display = "none";
 
       const canvasLeft = document.getElementById("vr-left");
       const canvasRight = document.getElementById("vr-right");
 
-      canvasLeft.width = window.innerWidth/2;
+      // tamanhos de canvas
+      canvasLeft.width = Math.floor(window.innerWidth / 2);
       canvasLeft.height = window.innerHeight;
-      canvasRight.width = window.innerWidth/2;
+      canvasRight.width = Math.floor(window.innerWidth / 2);
       canvasRight.height = window.innerHeight;
 
-      const rendererLeft = new THREE.WebGLRenderer({ canvas: canvasLeft });
-      const rendererRight = new THREE.WebGLRenderer({ canvas: canvasRight });
+      // Cria renderers apontando para os canvases (um por olho)
+      const rendererLeft  = new THREE.WebGLRenderer({ canvas: canvasLeft, antialias: true, alpha: false });
+      const rendererRight = new THREE.WebGLRenderer({ canvas: canvasRight, antialias: true, alpha: false });
 
-      rendererLeft.setSize(window.innerWidth/2, window.innerHeight);
-      rendererRight.setSize(window.innerWidth/2, window.innerHeight);
+      rendererLeft.setSize(canvasLeft.width, canvasLeft.height);
+      rendererRight.setSize(canvasRight.width, canvasRight.height);
 
+      // Aproveita a cena do A-Frame
       const scene3D = scene.object3D;
-      const cameraLeft = new THREE.PerspectiveCamera(75, (window.innerWidth/2)/window.innerHeight, 0.1, 1000);
-      const cameraRight = cameraLeft.clone();
 
-      cameraLeft.position.x = -0.03; 
-      cameraRight.position.x = 0.03;
+      // cria cameras perspectiva por olho que irão renderizar para renderTargets
+      const aspect = canvasLeft.width / canvasLeft.height;
+      const FOV = 90;
+      const cameraLeft = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
+      const cameraRight = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
 
-      function applyBarrelDistortion(renderer, canvas){
-        const gl = renderer.getContext();
-        gl.viewport(0,0,canvas.width,canvas.height);
+      // IPD (distância interpupilar) 6.4cm -> 0.032 por lado (3.2cm)
+      cameraLeft.position.set(-0.032, 0, 0);
+      cameraRight.position.set(0.032, 0, 0);
+
+      cameraLeft.rotation.reorder("YXZ");
+      cameraRight.rotation.reorder("YXZ");
+
+      // RenderTargets e quads com shader
+      const { rtLeft, rtRight, quadLeft, quadRight } = setupEyeRenderers(rendererLeft, canvasLeft.width, canvasLeft.height, { k1: 0.28, k2: 0.08 });
+
+      // Associa cada renderTarget ao renderer correto (obs: tDiffuse já definido dentro do material)
+      // Render loop:
+      function loop() {
+        // 1) Render scene3D para renderTarget left usando cameraLeft
+        rendererLeft.setRenderTarget(rtLeft);
+        rendererLeft.clear();
+        rendererLeft.render(scene3D, cameraLeft);
+        rendererLeft.setRenderTarget(null);
+
+        // 2) Render scene3D para renderTarget right usando cameraRight (usando same renderer or other)
+        rendererRight.setRenderTarget(rtRight);
+        rendererRight.clear();
+        rendererRight.render(scene3D, cameraRight);
+        rendererRight.setRenderTarget(null);
+
+        // 3) Agora desenha os quads (que aplicam barrel distortion) para cada canvas
+        // Left
+        rendererLeft.clear();
+        rendererLeft.render(quadLeft.scene, quadLeft.camera);
+
+        // Right
+        rendererRight.clear();
+        rendererRight.render(quadRight.scene, quadRight.camera);
+
+        requestAnimationFrame(loop);
       }
 
-      function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma){
-        const deg2rad = Math.PI/180;
-        const euler = new THREE.Euler(beta*deg2rad, alpha*deg2rad, -gamma*deg2rad, 'YXZ');
-        camera.quaternion.setFromEuler(euler);
-      }
-
+      // Atualiza orientação da câmera quando DeviceOrientation muda
       window.addEventListener("deviceorientation", e => {
-        updateCameraFromDeviceOrientation(cameraLeft, e.alpha, e.beta, e.gamma);
+        updateCameraFromDeviceOrientation(cameraLeft,  e.alpha, e.beta, e.gamma);
         updateCameraFromDeviceOrientation(cameraRight, e.alpha, e.beta, e.gamma);
+      }, true);
+
+      // inicia
+      loop();
+
+      // fullscreen no body
+      if(document.body.requestFullscreen){
+        document.body.requestFullscreen().catch(()=>{});
+      } else if(document.body.webkitRequestFullscreen){
+        document.body.webkitRequestFullscreen();
+      }
+
+      // Atualiza tamanho em resize
+      window.addEventListener("resize", () => {
+        canvasLeft.width = Math.floor(window.innerWidth / 2);
+        canvasLeft.height = window.innerHeight;
+        canvasRight.width = Math.floor(window.innerWidth / 2);
+        canvasRight.height = window.innerHeight;
+
+        rendererLeft.setSize(canvasLeft.width, canvasLeft.height);
+        rendererRight.setSize(canvasRight.width, canvasRight.height);
+
+        // atualizar renderTargets (recria para novo tamanho)
+        rtLeft.setSize(canvasLeft.width, canvasLeft.height);
+        rtRight.setSize(canvasRight.width, canvasRight.height);
+
+        const aspectNew = canvasLeft.width / canvasLeft.height;
+        quadLeft.material.uniforms.aspect.value = aspectNew;
+        quadRight.material.uniforms.aspect.value = aspectNew;
+
+        cameraLeft.aspect = aspectNew; cameraLeft.updateProjectionMatrix();
+        cameraRight.aspect = aspectNew; cameraRight.updateProjectionMatrix();
       });
 
-      function renderLoop(){
-        rendererLeft.render(scene3D, cameraLeft);
-        rendererRight.render(scene3D, cameraRight);
-        requestAnimationFrame(renderLoop);
-      }
-      renderLoop();
-
-      const el = document.documentElement;
-      const reqFS = el.requestFullscreen || el.webkitRequestFullscreen;
-      if(reqFS) reqFS.call(el);
-
     } else {
-      // Android
+      // Android / navegadores com WebXR/WebVR nativo (A-Frame)
       if(scene && typeof scene.enterVR === "function"){
         try { await scene.enterVR(); } catch(err){ console.warn(err); }
       }
