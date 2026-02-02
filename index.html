@@ -443,11 +443,21 @@ window.addEventListener("load", () => {
     const aspect = widthHalf / height;
 
     const FOV = 90;
+    
+    // Criar container para as câmeras (rig)
+    const cameraRig = new THREE.Object3D();
+    scene3D.add(cameraRig);
+    
     const cameraLeft = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
     const cameraRight = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
 
+    // Posicionar câmeras no rig (IPD = 6.4cm)
     cameraLeft.position.set(-0.032, 0, 0);
     cameraRight.position.set(0.032, 0, 0);
+    
+    // Adicionar câmeras ao rig
+    cameraRig.add(cameraLeft);
+    cameraRig.add(cameraRight);
 
     const rtParams = { 
       minFilter: THREE.LinearFilter, 
@@ -525,7 +535,7 @@ window.addEventListener("load", () => {
     const quadLeft = createDistortionQuad(rtLeft, aspect);
     const quadRight = createDistortionQuad(rtRight, aspect);
 
-    function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma) {
+    function updateCameraFromDeviceOrientation(cameraRig, alpha, beta, gamma) {
       if (alpha === null || beta === null || gamma === null) return;
 
       const deg2rad = Math.PI / 180;
@@ -535,30 +545,36 @@ window.addEventListener("load", () => {
         -gamma * deg2rad, 
         'YXZ'
       );
-      camera.quaternion.setFromEuler(euler);
+      cameraRig.quaternion.setFromEuler(euler);
     }
 
     function vrStereoLoop() {
       if(activeMode !== "vr-stereo") return;
 
+      // Renderizar olho esquerdo
       renderer.setRenderTarget(rtLeft);
       renderer.clear();
       renderer.render(scene3D, cameraLeft);
 
+      // Renderizar olho direito
       renderer.setRenderTarget(rtRight);
       renderer.clear();
       renderer.render(scene3D, cameraRight);
 
+      // Renderizar para tela
       renderer.setRenderTarget(null);
       renderer.clear();
 
+      // Lado esquerdo
       renderer.setViewport(0, 0, widthHalf, height);
       renderer.setScissor(0, 0, widthHalf, height);
       renderer.setScissorTest(true);
       renderer.render(quadLeft.scene, quadLeft.camera);
 
+      // Lado direito
       renderer.setViewport(widthHalf, 0, widthHalf, height);
       renderer.setScissor(widthHalf, 0, widthHalf, height);
+      renderer.setScissorTest(true);
       renderer.render(quadRight.scene, quadRight.camera);
 
       renderer.setScissorTest(false);
@@ -567,8 +583,7 @@ window.addEventListener("load", () => {
     }
 
     const orientationHandler = (e) => {
-      updateCameraFromDeviceOrientation(cameraLeft, e.alpha, e.beta, e.gamma);
-      updateCameraFromDeviceOrientation(cameraRight, e.alpha, e.beta, e.gamma);
+      updateCameraFromDeviceOrientation(cameraRig, e.alpha, e.beta, e.gamma);
     };
 
     window.addEventListener("deviceorientation", orientationHandler, true);
