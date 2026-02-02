@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Visualização 360° VR — com Barrel Distortion</title>
+  <title>Visualização 360° VR/AR</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
@@ -17,40 +17,85 @@
       background: black;
       position: fixed;
       width: 100%;
-      /* iOS Safari: forçar altura completa (fullscreen no IOS tbm precisa ser mimetizado) */
       min-height: -webkit-fill-available;
+      touch-action: none;
     }
 
-    #enter-vr-btn {
+    #controls-panel {
       position: absolute;
       bottom: 20px;
-      right: 20px;
-      padding: 12px 18px;
-      font-size: 16px;
-      border: none;
-      border-radius: 8px;
-      background: rgba(0,0,0,0.6);
-      color: white;
-      cursor: pointer;
-      display: none;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
       z-index: 999;
+    }
+
+    #exit-btn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      display: none;
+      z-index: 9999;
+    }
+
+    #immersive-container {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1000;
+      background: black;
+    }
+
+    #immersive-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #ar-container {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1000;
+      background: black;
+    }
+
+    #ar-video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    #ar-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
     }
 
     #vr-fake {
       display: none;
       position: fixed;
-      top:0; left:0;
+      top: 0;
+      left: 0;
       width: 100vw;
       height: 100vh;
       z-index: 1000;
-      background:black;
+      background: black;
       overflow: hidden;
-    }
-
-    #vr-container {
-      position: relative;
-      width: 100%;
-      height: 100%;
     }
 
     #vr-canvas {
@@ -60,17 +105,41 @@
       width: 100%;
       height: 100%;
     }
+
+    .info-text {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+      max-width: 80%;
+      z-index: 9998;
+    }
+
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 18px;
+      z-index: 9999;
+    }
   </style>
 </head>
 <body>
 
-<a-scene id="scene" vr-mode-ui="enabled:true">
+<a-scene id="scene" vr-mode-ui="enabled:false" embedded>
   <a-assets>
     <img id="panorama" src="./Cantagalo.JPG" crossorigin="anonymous">
-
     <img id="temp1" src="./Cantagalo.JPG" crossorigin="anonymous">
     <img id="temp2" src="./Q360_20240713_135032_000001_Output.JPG" crossorigin="anonymous">
-
     <audio id="audio1" src="./tes1.mp3" preload="auto"></audio>
     <audio id="audio2" src="./tes2.mp3" preload="auto"></audio>
   </a-assets>
@@ -83,25 +152,55 @@
   <a-sky id="sky-temp" src="#temp1" rotation="0 -90 0" visible="false"></a-sky>
 </a-scene>
 
-<button id="enter-vr-btn">🕶️ Ativar VR</button>
-
-<div id="vr-fake">
-  <div id="vr-container">
-    <canvas id="vr-canvas"></canvas>
-  </div>
+<div id="controls-panel">
+  <button id="vr-btn">VR</button>
+  <button id="ar-btn">AR</button>
 </div>
+
+<button id="exit-btn">Sair</button>
+
+<!-- Modo VR iOS (renderização estéreo com distorção) -->
+<div id="vr-fake">
+  <canvas id="vr-canvas"></canvas>
+</div>
+
+<!-- Modo AR com câmera -->
+<div id="ar-container">
+  <video id="ar-video" autoplay playsinline></video>
+  <canvas id="ar-canvas"></canvas>
+  <div class="info-text" id="ar-info">Mova o dispositivo para explorar</div>
+</div>
+
+<!-- Modo VR iOS simplificado (para quem não tem óculos VR) -->
+<div id="immersive-container">
+  <canvas id="immersive-canvas"></canvas>
+  <div class="info-text">Mova o dispositivo para explorar</div>
+</div>
+
+<div class="loading" id="loading" style="display:none;">Carregando...</div>
 
 <script>
 window.addEventListener("load", () => {
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const btn = document.getElementById("enter-vr-btn");
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  
   const scene = document.getElementById("scene");
   const sky = document.getElementById("sky");
   const skyTemp = document.getElementById("sky-temp");
   const vrFake = document.getElementById("vr-fake");
+  const arContainer = document.getElementById("ar-container");
+  const immersiveContainer = document.getElementById("immersive-container");
+  const loading = document.getElementById("loading");
+  
+  const vrBtn = document.getElementById("vr-btn");
+  const arBtn = document.getElementById("ar-btn");
+  const exitBtn = document.getElementById("exit-btn");
+  const controlsPanel = document.getElementById("controls-panel");
 
-  if(isIOS) btn.style.display = "block";
+  let currentMode = "normal";
+  let activeMode = null;
 
+  // Carregamento do panorama
   scene.addEventListener("loaded", () => {
     const panorama = document.getElementById("panorama");
     if(panorama.complete){
@@ -111,25 +210,30 @@ window.addEventListener("load", () => {
     }
   });
 
+  // Permissões de sensores
   async function requestSensorPermissions(){
     if(typeof DeviceMotionEvent?.requestPermission === "function"){
       try { 
         const response = await DeviceMotionEvent.requestPermission();
-        console.log('DeviceMotion permission:', response);
+        return response === 'granted';
       } catch(e) { 
         console.warn('DeviceMotion permission denied:', e);
+        return false;
       }
     }
     if(typeof DeviceOrientationEvent?.requestPermission === "function"){
       try { 
         const response = await DeviceOrientationEvent.requestPermission();
-        console.log('DeviceOrientation permission:', response);
+        return response === 'granted';
       } catch(e) { 
         console.warn('DeviceOrientation permission denied:', e);
+        return false;
       }
     }
+    return true;
   }
 
+  // Sequência temporária de panoramas
   const panoramasTemp = [
     { img: "#temp1", audio: document.getElementById("audio1") },
     { img: "#temp2", audio: document.getElementById("audio2") }
@@ -145,11 +249,13 @@ window.addEventListener("load", () => {
     const pano = panoramasTemp[currentTempIndex];
     skyTemp.setAttribute("src", pano.img);
     skyTemp.setAttribute("visible", "true");
-    pano.audio.play();
+    if(pano.audio) pano.audio.play();
 
     setTimeout(() => {
-      pano.audio.pause();
-      pano.audio.currentTime = 0;
+      if(pano.audio){
+        pano.audio.pause();
+        pano.audio.currentTime = 0;
+      }
       currentTempIndex++;
       playTemporarySequence();
     }, 30000);
@@ -157,258 +263,546 @@ window.addEventListener("load", () => {
   setTimeout(playTemporarySequence, 5000);
 
   // =============================
-  // BARREL DISTORTION SHADER
+  // MODO VR
   // =============================
-  const DistortionShader = {
-    uniforms: {
-      "tDiffuse": { value: null },
-      "k1": { value: 0.22 },
-      "k2": { value: 0.05 },
-      "aspect": { value: 1.0 }
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = vec4(position, 1.0);
+  async function startVRMode() {
+    if(activeMode) return;
+
+    loading.style.display = "block";
+
+    const hasPermission = await requestSensorPermissions();
+    if(!hasPermission && isIOS){
+      alert("É necessário permitir acesso aos sensores");
+      loading.style.display = "none";
+      return;
+    }
+
+    // iOS: VR simplificado (360° imersivo) ou estéreo com óculos
+    if(isIOS || isSafari) {
+      // Perguntar ao usuário o que ele prefere
+      const useCardboard = confirm("Você tem óculos VR (Google Cardboard)?\n\nOK = Sim (modo estéreo)\nCancelar = Não (modo simples)");
+      
+      if(useCardboard) {
+        // Modo VR estéreo com barrel distortion
+        await startStereoscopicVR();
+      } else {
+        // Modo VR simplificado (360° imersivo)
+        await startSimpleVR();
       }
-    `,
-    fragmentShader: `
-      precision highp float;
-      varying vec2 vUv;
-      uniform sampler2D tDiffuse;
-      uniform float k1;
-      uniform float k2;
-      uniform float aspect;
-
-      void main() {
-        vec2 uv = vUv * 2.0 - 1.0;
-        uv.x *= aspect;
-
-        float r2 = uv.x*uv.x + uv.y*uv.y;
-        float factor = 1.0 + k1 * r2 + k2 * r2 * r2;
-
-        vec2 distorted = uv * factor;
-        distorted.x /= aspect;
-        vec2 sampleUV = (distorted + 1.0) * 0.5;
-
-        if(sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
-          gl_FragColor = vec4(0.0,0.0,0.0,1.0);
-        } else {
-          gl_FragColor = texture2D(tDiffuse, sampleUV);
+    } else {
+      // Android: tentar WebXR nativo, fallback para 360° imersivo
+      if(scene && typeof scene.enterVR === "function"){
+        try { 
+          await scene.enterVR();
+          activeMode = "vr-native";
+          currentMode = "vr";
+          controlsPanel.style.display = "none";
+          exitBtn.style.display = "block";
+          loading.style.display = "none";
+        } catch(err){ 
+          console.warn('WebXR não disponível:', err);
+          await startSimpleVR();
         }
+      } else {
+        await startSimpleVR();
       }
-    `
-  };
+    }
+  }
 
-  function createDistortionQuad(renderTarget, aspect, k1=0.22, k2=0.05) {
-    const quadScene = new THREE.Scene();
-    const quadCamera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
-    const geometry = new THREE.PlaneBufferGeometry(2,2);
-    const material = new THREE.ShaderMaterial({
-      uniforms: THREE.UniformsUtils.clone(DistortionShader.uniforms),
-      vertexShader: DistortionShader.vertexShader,
-      fragmentShader: DistortionShader.fragmentShader,
-      depthTest: false,
-      depthWrite: false
+  // VR Simplificado (360° imersivo) - usado quando usuário não tem óculos VR
+  async function startSimpleVR() {
+    immersiveContainer.style.display = "block";
+    scene.style.display = "none";
+    controlsPanel.style.display = "none";
+    exitBtn.style.display = "block";
+
+    activeMode = "vr-simple";
+    currentMode = "vr";
+    loading.style.display = "none";
+
+    const canvas = document.getElementById("immersive-canvas");
+    
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+
+    const renderer = new THREE.WebGLRenderer({ 
+      canvas: canvas, 
+      antialias: true 
     });
-    material.uniforms.tDiffuse.value = renderTarget.texture;
-    material.uniforms.k1.value = k1;
-    material.uniforms.k2.value = k2;
-    material.uniforms.aspect.value = aspect;
+    renderer.setSize(canvas.width, canvas.height);
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
 
-    const mesh = new THREE.Mesh(geometry, material);
-    quadScene.add(mesh);
+    const scene3D = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
+    camera.position.set(0, 0, 0);
 
-    return { scene: quadScene, camera: quadCamera, material };
-  }
+    // Esfera 360°
+    const geometry = new THREE.SphereGeometry(500, 60, 40);
+    geometry.scale(-1, 1, 1);
 
-  // =============================
-  // DEVICE ORIENTATION HANDLER
-  // =============================
-  function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma) {
-    if (alpha === null || beta === null || gamma === null) return;
-
-    const deg2rad = Math.PI / 180;
+    const textureLoader = new THREE.TextureLoader();
+    const texture = textureLoader.load('./Cantagalo.JPG');
     
-    // Ajuste específico para iOS
-    const _alpha = alpha * deg2rad;
-    const _beta = beta * deg2rad;
-    const _gamma = gamma * deg2rad;
-
-    const euler = new THREE.Euler();
-    euler.set(_beta, _alpha, -_gamma, 'YXZ');
+    const material = new THREE.MeshBasicMaterial({ 
+      map: texture,
+      side: THREE.BackSide
+    });
     
-    camera.quaternion.setFromEuler(euler);
-  }
+    const sphere = new THREE.Mesh(geometry, material);
+    sphere.rotation.y = -Math.PI / 2;
+    scene3D.add(sphere);
 
-  // =============================
-  // FULLSCREEN HELPER iOS
-  // =============================
-  function requestFullscreen(element) {
-    // esconder barra de endereço com scroll trick
-    if (isIOS) {
-      window.scrollTo(0, 1);
-      setTimeout(() => window.scrollTo(0, 0), 100);
-      
-      // bloquear scroll durante VR
-      document.body.style.overflow = 'hidden';
-      document.documentElement.style.overflow = 'hidden';
-      
-      // Usar standalone mode se disponível (PWA)
-      if (window.navigator.standalone) {
-        return true;
+    // Controle de orientação
+    let alpha = 0, beta = 0, gamma = 0;
+    let hasOrientation = false;
+
+    function handleOrientation(event) {
+      if (event.alpha !== null) {
+        hasOrientation = true;
+        alpha = event.alpha;
+        beta = event.beta;
+        gamma = event.gamma;
       }
     }
-    
-    // fullscreen em outros navegadores
-    if (element.requestFullscreen) {
-      element.requestFullscreen().catch(err => console.log('Fullscreen error:', err));
-    } else if (element.webkitRequestFullscreen) {
-      element.webkitRequestFullscreen();
-    } else if (element.webkitEnterFullscreen) {
-      element.webkitEnterFullscreen();
-    } else if (element.msRequestFullscreen) {
-      element.msRequestFullscreen();
+
+    window.addEventListener("deviceorientation", handleOrientation, true);
+
+    function vrLoop() {
+      if (activeMode !== "vr-simple") return;
+
+      if (hasOrientation) {
+        const alphaRad = THREE.MathUtils.degToRad(alpha || 0);
+        const betaRad = THREE.MathUtils.degToRad(beta || 0);
+        const gammaRad = THREE.MathUtils.degToRad(gamma || 0);
+
+        const euler = new THREE.Euler(betaRad, alphaRad, -gammaRad, 'YXZ');
+        camera.quaternion.setFromEuler(euler);
+      }
+
+      renderer.render(scene3D, camera);
+      requestAnimationFrame(vrLoop);
     }
+
+    vrLoop();
+
+    const resizeHandler = () => {
+      resizeCanvas();
+      camera.aspect = canvas.width / canvas.height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(canvas.width, canvas.height);
+    };
+    window.addEventListener("resize", resizeHandler);
+
+    window.stopVRSimple = () => {
+      activeMode = null;
+      window.removeEventListener("resize", resizeHandler);
+      window.removeEventListener("deviceorientation", handleOrientation);
+      
+      immersiveContainer.style.display = "none";
+      scene.style.display = "block";
+      controlsPanel.style.display = "flex";
+      exitBtn.style.display = "none";
+      currentMode = "normal";
+      
+      geometry.dispose();
+      material.dispose();
+      texture.dispose();
+      renderer.dispose();
+    };
   }
 
-  // VR
-  btn.addEventListener("click", async () => {
-    await requestSensorPermissions();
+  // VR Estereoscópico (para óculos VR)
+  async function startStereoscopicVR() {
+    vrFake.style.display = "block";
+    scene.style.display = "none";
+    controlsPanel.style.display = "none";
+    exitBtn.style.display = "block";
 
-    if(isIOS){
-      // iOS VR com barrel distortion
-      vrFake.style.display = "block";
-      scene.style.display = "none";
+    activeMode = "vr-stereo";
+    currentMode = "vr";
+    loading.style.display = "none";
 
-      const canvas = document.getElementById("vr-canvas");
+    const canvas = document.getElementById("vr-canvas");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const renderer = new THREE.WebGLRenderer({ 
+      canvas: canvas, 
+      antialias: true, 
+      alpha: false 
+    });
+    renderer.setSize(canvas.width, canvas.height);
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+    const scene3D = scene.object3D;
+    const widthHalf = Math.floor(canvas.width / 2);
+    const height = canvas.height;
+    const aspect = widthHalf / height;
+
+    const FOV = 90;
+    const cameraLeft = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
+    const cameraRight = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
+
+    cameraLeft.position.set(-0.032, 0, 0);
+    cameraRight.position.set(0.032, 0, 0);
+
+    const rtParams = { 
+      minFilter: THREE.LinearFilter, 
+      magFilter: THREE.LinearFilter, 
+      format: THREE.RGBAFormat 
+    };
+    const rtLeft = new THREE.WebGLRenderTarget(widthHalf, height, rtParams);
+    const rtRight = new THREE.WebGLRenderTarget(widthHalf, height, rtParams);
+
+    // Shader de distorção barrel
+    const DistortionShader = {
+      uniforms: {
+        "tDiffuse": { value: null },
+        "k1": { value: 0.22 },
+        "k2": { value: 0.05 },
+        "aspect": { value: 1.0 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        varying vec2 vUv;
+        uniform sampler2D tDiffuse;
+        uniform float k1;
+        uniform float k2;
+        uniform float aspect;
+
+        void main() {
+          vec2 uv = vUv * 2.0 - 1.0;
+          uv.x *= aspect;
+
+          float r2 = uv.x*uv.x + uv.y*uv.y;
+          float factor = 1.0 + k1 * r2 + k2 * r2 * r2;
+
+          vec2 distorted = uv * factor;
+          distorted.x /= aspect;
+          vec2 sampleUV = (distorted + 1.0) * 0.5;
+
+          if(sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+            gl_FragColor = vec4(0.0,0.0,0.0,1.0);
+          } else {
+            gl_FragColor = texture2D(tDiffuse, sampleUV);
+          }
+        }
+      `
+    };
+
+    function createDistortionQuad(renderTarget, aspect) {
+      const quadScene = new THREE.Scene();
+      const quadCamera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+      const geometry = new THREE.PlaneBufferGeometry(2,2);
+      const material = new THREE.ShaderMaterial({
+        uniforms: THREE.UniformsUtils.clone(DistortionShader.uniforms),
+        vertexShader: DistortionShader.vertexShader,
+        fragmentShader: DistortionShader.fragmentShader,
+        depthTest: false,
+        depthWrite: false
+      });
+      material.uniforms.tDiffuse.value = renderTarget.texture;
+      material.uniforms.k1.value = 0.22;
+      material.uniforms.k2.value = 0.05;
+      material.uniforms.aspect.value = aspect;
+
+      const mesh = new THREE.Mesh(geometry, material);
+      quadScene.add(mesh);
+
+      return { scene: quadScene, camera: quadCamera, material };
+    }
+
+    const quadLeft = createDistortionQuad(rtLeft, aspect);
+    const quadRight = createDistortionQuad(rtRight, aspect);
+
+    function updateCameraFromDeviceOrientation(camera, alpha, beta, gamma) {
+      if (alpha === null || beta === null || gamma === null) return;
+
+      const deg2rad = Math.PI / 180;
+      const euler = new THREE.Euler(
+        beta * deg2rad, 
+        alpha * deg2rad, 
+        -gamma * deg2rad, 
+        'YXZ'
+      );
+      camera.quaternion.setFromEuler(euler);
+    }
+
+    function vrStereoLoop() {
+      if(activeMode !== "vr-stereo") return;
+
+      renderer.setRenderTarget(rtLeft);
+      renderer.clear();
+      renderer.render(scene3D, cameraLeft);
+
+      renderer.setRenderTarget(rtRight);
+      renderer.clear();
+      renderer.render(scene3D, cameraRight);
+
+      renderer.setRenderTarget(null);
+      renderer.clear();
+
+      renderer.setViewport(0, 0, widthHalf, height);
+      renderer.setScissor(0, 0, widthHalf, height);
+      renderer.setScissorTest(true);
+      renderer.render(quadLeft.scene, quadLeft.camera);
+
+      renderer.setViewport(widthHalf, 0, widthHalf, height);
+      renderer.setScissor(widthHalf, 0, widthHalf, height);
+      renderer.render(quadRight.scene, quadRight.camera);
+
+      renderer.setScissorTest(false);
+
+      requestAnimationFrame(vrStereoLoop);
+    }
+
+    const orientationHandler = (e) => {
+      updateCameraFromDeviceOrientation(cameraLeft, e.alpha, e.beta, e.gamma);
+      updateCameraFromDeviceOrientation(cameraRight, e.alpha, e.beta, e.gamma);
+    };
+
+    window.addEventListener("deviceorientation", orientationHandler, true);
+    vrStereoLoop();
+
+    // Tentar fullscreen
+    setTimeout(() => {
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(e => console.log(e));
+      } else if (document.documentElement.webkitRequestFullscreen) {
+        document.documentElement.webkitRequestFullscreen();
+      }
+    }, 100);
+
+    const resizeHandler = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
 
-      //renderer único 
+      const newWidthHalf = Math.floor(canvas.width / 2);
+      const newHeight = canvas.height;
+      const newAspect = newWidthHalf / newHeight;
+
+      renderer.setSize(canvas.width, canvas.height);
+      rtLeft.setSize(newWidthHalf, newHeight);
+      rtRight.setSize(newWidthHalf, newHeight);
+
+      quadLeft.material.uniforms.aspect.value = newAspect;
+      quadRight.material.uniforms.aspect.value = newAspect;
+
+      cameraLeft.aspect = newAspect;
+      cameraLeft.updateProjectionMatrix();
+      cameraRight.aspect = newAspect;
+      cameraRight.updateProjectionMatrix();
+    };
+
+    window.addEventListener("resize", resizeHandler);
+
+    window.stopVRStereo = () => {
+      activeMode = null;
+      window.removeEventListener("resize", resizeHandler);
+      window.removeEventListener("deviceorientation", orientationHandler);
+      
+      vrFake.style.display = "none";
+      scene.style.display = "block";
+      controlsPanel.style.display = "flex";
+      exitBtn.style.display = "none";
+      currentMode = "normal";
+      
+      renderer.dispose();
+      rtLeft.dispose();
+      rtRight.dispose();
+    };
+  }
+
+  // =============================
+  // MODO AR
+  // =============================
+  async function startARMode() {
+    if(activeMode) return;
+
+    loading.style.display = "block";
+    
+    try {
+      const hasPermission = await requestSensorPermissions();
+      if(!hasPermission && isIOS){
+        alert("É necessário permitir acesso aos sensores");
+        loading.style.display = "none";
+        return;
+      }
+
+      // Solicitar câmera
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        audio: false
+      });
+
+      const video = document.getElementById("ar-video");
+      video.srcObject = stream;
+      await video.play();
+
+      const canvas = document.getElementById("ar-canvas");
+      
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      resizeCanvas();
+
+      arContainer.style.display = "block";
+      scene.style.display = "none";
+      controlsPanel.style.display = "none";
+      exitBtn.style.display = "block";
+
+      activeMode = "ar";
+      currentMode = "ar";
+      loading.style.display = "none";
+
       const renderer = new THREE.WebGLRenderer({ 
         canvas: canvas, 
-        antialias: true, 
-        alpha: false 
+        alpha: true,
+        antialias: true 
       });
       renderer.setSize(canvas.width, canvas.height);
       renderer.setPixelRatio(window.devicePixelRatio || 1);
+      renderer.setClearColor(0x000000, 0);
 
-      // cena do A-Frame
-      const scene3D = scene.object3D;
+      const scene3D = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
+      camera.position.set(0, 0, 0);
 
-      // dimensões por olho
-      const widthHalf = Math.floor(canvas.width / 2);
-      const height = canvas.height;
-      const aspect = widthHalf / height;
+      // Esfera 360°
+      const geometry = new THREE.SphereGeometry(500, 60, 40);
+      geometry.scale(-1, 1, 1);
 
-      // câmeras estéreo
-      const FOV = 90;
-      const cameraLeft = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
-      const cameraRight = new THREE.PerspectiveCamera(FOV, aspect, 0.1, 1000);
+      const textureLoader = new THREE.TextureLoader();
+      const texture = textureLoader.load('./Cantagalo.JPG');
+      
+      const material = new THREE.MeshBasicMaterial({ 
+        map: texture,
+        transparent: true,
+        opacity: 0.75,
+        side: THREE.BackSide,
+        depthWrite: false
+      });
+      
+      const sphere = new THREE.Mesh(geometry, material);
+      sphere.rotation.y = -Math.PI / 2;
+      scene3D.add(sphere);
+      
+      // Controle de opacidade por toque
+      let touchStartY = 0;
+      canvas.addEventListener('touchstart', (e) => {
+        touchStartY = e.touches[0].clientY;
+      });
+      
+      canvas.addEventListener('touchmove', (e) => {
+        const touchY = e.touches[0].clientY;
+        const delta = (touchStartY - touchY) / window.innerHeight;
+        material.opacity = Math.max(0.2, Math.min(1.0, material.opacity + delta * 0.5));
+        touchStartY = touchY;
+      });
 
-      // IPD: 6.4cm total = 0.032m por lado
-      cameraLeft.position.set(-0.032, 0, 0);
-      cameraRight.position.set(0.032, 0, 0);
-
-      // RenderTargets
-      const rtParams = { 
-        minFilter: THREE.LinearFilter, 
-        magFilter: THREE.LinearFilter, 
-        format: THREE.RGBAFormat 
-      };
-      const rtLeft = new THREE.WebGLRenderTarget(widthHalf, height, rtParams);
-      const rtRight = new THREE.WebGLRenderTarget(widthHalf, height, rtParams);
-
-      // Quads com distorção
-      const quadLeft = createDistortionQuad(rtLeft, aspect, 0.22, 0.05);
-      const quadRight = createDistortionQuad(rtRight, aspect, 0.22, 0.05);
-
-      // Rotação inicial
+      // Controle de orientação
+      let alpha = 0, beta = 0, gamma = 0;
       let hasOrientation = false;
 
-      // Loop de renderização
-      function loop() {
-        //olho esquerdo
-        renderer.setRenderTarget(rtLeft);
-        renderer.clear();
-        renderer.render(scene3D, cameraLeft);
-
-        //olho direito
-        renderer.setRenderTarget(rtRight);
-        renderer.clear();
-        renderer.render(scene3D, cameraRight);
-
-        renderer.setRenderTarget(null);
-        renderer.clear();
-
-        //lado esquerdo com distorção
-        renderer.setViewport(0, 0, widthHalf, height);
-        renderer.setScissor(0, 0, widthHalf, height);
-        renderer.setScissorTest(true);
-        renderer.render(quadLeft.scene, quadLeft.camera);
-
-        //lado direito com distorção
-        renderer.setViewport(widthHalf, 0, widthHalf, height);
-        renderer.setScissor(widthHalf, 0, widthHalf, height);
-        renderer.render(quadRight.scene, quadRight.camera);
-
-        renderer.setScissorTest(false);
-
-        requestAnimationFrame(loop);
-      }
-
-      // Listener de orientação
-      const orientationHandler = (e) => {
-        hasOrientation = true;
-        updateCameraFromDeviceOrientation(cameraLeft, e.alpha, e.beta, e.gamma);
-        updateCameraFromDeviceOrientation(cameraRight, e.alpha, e.beta, e.gamma);
-      };
-
-      window.addEventListener("deviceorientation", orientationHandler, true);
-
-      loop();
-
-      // Fullscreen (ios é problemática até nisso)
-      setTimeout(() => {
-        requestFullscreen(document.body);
-      }, 100);
-
-      const resizeHandler = () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-
-        const newWidthHalf = Math.floor(canvas.width / 2);
-        const newHeight = canvas.height;
-        const newAspect = newWidthHalf / newHeight;
-
-        renderer.setSize(canvas.width, canvas.height);
-        renderer.setPixelRatio(window.devicePixelRatio || 1);
-
-        rtLeft.setSize(newWidthHalf, newHeight);
-        rtRight.setSize(newWidthHalf, newHeight);
-
-        quadLeft.material.uniforms.aspect.value = newAspect;
-        quadRight.material.uniforms.aspect.value = newAspect;
-
-        cameraLeft.aspect = newAspect;
-        cameraLeft.updateProjectionMatrix();
-        cameraRight.aspect = newAspect;
-        cameraRight.updateProjectionMatrix();
-      };
-
-      window.addEventListener("resize", resizeHandler);
-
-    } else {
-      // Android / navegadores com WebXR/WebVR nativo (A-Frame)
-      if(scene && typeof scene.enterVR === "function"){
-        try { 
-          await scene.enterVR(); 
-        } catch(err){ 
-          console.warn('enterVR error:', err); 
+      function handleOrientation(event) {
+        if (event.alpha !== null) {
+          hasOrientation = true;
+          alpha = event.alpha;
+          beta = event.beta;
+          gamma = event.gamma;
         }
       }
+
+      window.addEventListener("deviceorientation", handleOrientation, true);
+
+      function arLoop() {
+        if (activeMode !== "ar") return;
+
+        if (hasOrientation) {
+          const alphaRad = THREE.MathUtils.degToRad(alpha || 0);
+          const betaRad = THREE.MathUtils.degToRad(beta || 0);
+          const gammaRad = THREE.MathUtils.degToRad(gamma || 0);
+
+          const euler = new THREE.Euler(betaRad, alphaRad, -gammaRad, 'YXZ');
+          camera.quaternion.setFromEuler(euler);
+        }
+
+        renderer.render(scene3D, camera);
+        requestAnimationFrame(arLoop);
+      }
+
+      arLoop();
+
+      const arResizeHandler = () => {
+        resizeCanvas();
+        camera.aspect = canvas.width / canvas.height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(canvas.width, canvas.height);
+      };
+      window.addEventListener("resize", arResizeHandler);
+
+      window.stopAR = () => {
+        activeMode = null;
+        window.removeEventListener("resize", arResizeHandler);
+        window.removeEventListener("resize", resizeCanvas);
+        window.removeEventListener("deviceorientation", handleOrientation);
+        
+        if(stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+        
+        arContainer.style.display = "none";
+        scene.style.display = "block";
+        controlsPanel.style.display = "flex";
+        exitBtn.style.display = "none";
+        currentMode = "normal";
+        
+        geometry.dispose();
+        material.dispose();
+        texture.dispose();
+        renderer.dispose();
+      };
+
+    } catch(error) {
+      console.error("Erro ao iniciar AR:", error);
+      alert("Não foi possível acessar a câmera. Certifique-se de permitir o acesso.");
+      loading.style.display = "none";
+      activeMode = null;
+    }
+  }
+
+  // Event listeners
+  vrBtn.addEventListener("click", startVRMode);
+  arBtn.addEventListener("click", startARMode);
+  
+  exitBtn.addEventListener("click", () => {
+    if(activeMode === "ar" && window.stopAR) {
+      window.stopAR();
+    } else if(activeMode === "vr-simple" && window.stopVRSimple) {
+      window.stopVRSimple();
+    } else if(activeMode === "vr-stereo" && window.stopVRStereo) {
+      window.stopVRStereo();
+    } else if(activeMode === "vr-native" && scene && typeof scene.exitVR === "function") {
+      scene.exitVR();
+      controlsPanel.style.display = "flex";
+      exitBtn.style.display = "none";
+      activeMode = null;
+      currentMode = "normal";
     }
   });
 
